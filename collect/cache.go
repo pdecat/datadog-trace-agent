@@ -31,6 +31,9 @@ type Settings struct {
 // is evicted due to completion or due to maxSize being reached. If addr is not
 // empty, it will be used to report stats to a statsd client.
 func NewCache(opts Settings) *Cache {
+	if opts.Out == nil {
+		panic("collect.NewCache: out channel can not be nil")
+	}
 	if opts.MaxSize <= 0 {
 		opts.MaxSize = defaultCacheSize
 	}

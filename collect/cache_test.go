@@ -43,14 +43,13 @@ func TestIsRoot(t *testing.T) {
 }
 
 func TestCacheEvictReasonSpace(t *testing.T) {
-	outCh := make(chan EvictedTrace)
+	outCh := make(chan EvictedTrace, 1)
 	maxSize := s12.Msgsize() + s13.Msgsize() + s22.Msgsize()
 	c := NewCache(Settings{
 		Out:     outCh,
 		MaxSize: maxSize,
 	})
 	shouldHave := func(traces ...*trace) { cacheContains(t, c, traces...) }
-	shouldEvict := func(want *EvictedTrace) { sameEvictedTrace(t, evicted, want) }
 
 	t1 := time.Now()
 	c.addWithTime([]*model.Span{s12, s13}, t1)
@@ -60,8 +59,11 @@ func TestCacheEvictReasonSpace(t *testing.T) {
 		lastmod: t1,
 		spans:   model.Trace{s12, s13},
 	})
-	if evicted != nil {
-		t.Fatal("unexpected evict")
+	select {
+	case ev := <-outCh:
+		t.Fatalf("unexpected evict: %v", ev)
+	default:
+		// OK
 	}
 
 	// touch limit
@@ -78,8 +80,11 @@ func TestCacheEvictReasonSpace(t *testing.T) {
 		lastmod: t2,
 		spans:   model.Trace{s22},
 	})
-	if evicted != nil {
-		t.Fatal("unexpected evict")
+	select {
+	case ev := <-outCh:
+		t.Fatalf("unexpected evict: %v", ev)
+	default:
+		// OK
 	}
 
 	// go overboard on trace 2
@@ -91,22 +96,26 @@ func TestCacheEvictReasonSpace(t *testing.T) {
 		lastmod: t3,
 		spans:   model.Trace{s22, s23},
 	})
-	// trace 1 is oldest - gets evicted
-	shouldEvict(&EvictedTrace{
-		Reason: ReasonSpace,
-		Root:   nil,
-		Trace:  model.Trace{s12, s13},
-	})
+	select {
+	case ev := <-outCh:
+		sameEvictedTrace(t, &ev, &EvictedTrace{
+			Reason: ReasonSpace,
+			Root:   nil,
+			Trace:  model.Trace{s12, s13},
+		})
+	default:
+		t.Fatal("expected evicted trace")
+	}
 }
 
 func TestCacheEvictReasonRoot(t *testing.T) {
-	var evicted *EvictedTrace
+	outCh := make(chan EvictedTrace, 1)
+	maxSize := s12.Msgsize() + s13.Msgsize() + s22.Msgsize()
 	c := NewCache(Settings{
-		OnEvict: func(et *EvictedTrace) { evicted = et },
-		MaxSize: 1000,
+		Out:     outCh,
+		MaxSize: maxSize,
 	})
 	shouldHave := func(traces ...*trace) { cacheContains(t, c, traces...) }
-	shouldEvict := func(want *EvictedTrace) { sameEvictedTrace(t, evicted, want) }
 
 	// add some children
 	t1 := time.Now()
@@ -122,8 +131,11 @@ func TestCacheEvictReasonRoot(t *testing.T) {
 		lastmod: t1,
 		spans:   model.Trace{s22, s23},
 	})
-	if evicted != nil {
-		t.Fatal("unexpected eviction")
+	select {
+	case ev := <-outCh:
+		t.Fatalf("unexpected evict: %v", ev)
+	default:
+		// OK
 	}
 
 	// include root of trace 1
@@ -135,11 +147,16 @@ func TestCacheEvictReasonRoot(t *testing.T) {
 		lastmod: t1,
 		spans:   model.Trace{s22, s23},
 	})
-	shouldEvict(&EvictedTrace{
-		Reason: ReasonRoot,
-		Root:   s11,
-		Trace:  trace1,
-	})
+	select {
+	case ev := <-outCh:
+		sameEvictedTrace(t, &ev, &EvictedTrace{
+			Reason: ReasonRoot,
+			Root:   s11,
+			Trace:  trace1,
+		})
+	default:
+		t.Fatal("expected evicted trace")
+	}
 }
 
 func TestCacheAddSpan(t *testing.T) {
@@ -147,7 +164,10 @@ func TestCacheAddSpan(t *testing.T) {
 	sec := func(s time.Duration) time.Time {
 		return now.Add(s)
 	}
-	c := NewCache(Settings{MaxSize: 1000})
+	c := NewCache(Settings{
+		MaxSize: 1000,
+		Out:     make(chan EvictedTrace),
+	})
 	shouldHave := func(traces ...*trace) {
 		cacheContains(t, c, traces...)
 	}
@@ -274,6 +294,12 @@ func cacheContains(t *testing.T, c *Cache, traces ...*trace) {
 func BenchmarkCacheAddSpan(b *testing.B) {
 	now := time.Now()
 	maxTraces := 10 // max number of traces to put spans into
+	outCh := make(chan EvictedTrace, 1000)
+	go func() {
+		for {
+			<-outCh
+		}
+	}()
 
 	for _, max := range []int{
 		10,    // few traces, testing load on the list move
@@ -282,7 +308,7 @@ func BenchmarkCacheAddSpan(b *testing.B) {
 		b.Run(fmt.Sprintf("%d-traces", max), func(b *testing.B) {
 			// we can use maxSize 1; addSpan doesn't care
 			c := NewCache(Settings{
-				OnEvict: func(et *EvictedTrace) {},
+				Out:     outCh,
 				MaxSize: 1,
 			})
 			b.SetBytes(int64(testSpan(0, 0, 0).Msgsize()))
