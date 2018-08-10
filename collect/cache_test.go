@@ -23,6 +23,25 @@ var (
 	trace2 = model.Trace{s21, s22, s23}
 )
 
+func TestIsRoot(t *testing.T) {
+	for _, tt := range []struct {
+		span *model.Span
+		root bool
+	}{
+		{&model.Span{Name: "root"}, true},
+		{&model.Span{Name: "child", ParentID: 2}, false},
+		{&model.Span{
+			Name:     "rootRemote",
+			ParentID: 2,
+			Metrics:  map[string]float64{tagRootSpan: 1},
+		}, true},
+	} {
+		if isRoot(tt.span) != tt.root {
+			t.Fatalf("bad root result: %q", tt.span.Name)
+		}
+	}
+}
+
 func TestCacheEvictReasonSpace(t *testing.T) {
 	var evicted *EvictedTrace
 	maxSize := s12.Msgsize() + s13.Msgsize() + s22.Msgsize()
