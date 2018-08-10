@@ -20,8 +20,10 @@ type collector struct {
 	out      chan collect.EvictedTrace
 }
 
-const maxRequestBodyLengthV1 = 10 * 1024 * 1024
-const maxCacheSize = 200 * 1024 * 1024 // 200MB
+const (
+	maxRequestBodyLengthV1 = 10 * 1024 * 1024  // 10MB
+	maxCacheSize           = 200 * 1024 * 1024 // 200MB
+)
 
 func newCollector(r *HTTPReceiver) http.Handler {
 	c := &collector{
@@ -46,11 +48,24 @@ func (c *collector) waitForTraces() {
 func (c *collector) handleEvictedTrace(et *collect.EvictedTrace) {
 	switch et.Reason {
 	case collect.ReasonSpace:
-		statsd.Client.Count("datadog.trace_agent.cache.evicted.space", 1, nil, 1)
+		// these should be stale, and possibly have been in the cache long
+		statsd.Client.Count("datadog.trace_agent.cache.evicted_space", 1, nil, 1)
+		c.logFallout(et)
+
 	case collect.ReasonRoot:
-		statsd.Client.Count("datadog.trace_agent.cache.evicted.root", 1, nil, 1)
+		statsd.Client.Count("datadog.trace_agent.cache.evicted_root", 1, nil, 1)
 	}
 	c.receiver.traces <- et.Trace
+}
+
+func (c *collector) logFallout(et *collect.EvictedTrace) {
+	// TODO: log information somewhere about evicted traces
+	// but keep track of occupied disk space and don't go
+	// overboard. Would be great to rotate and always have
+	// latest.
+	//
+	// Only log sub-sections of traces. Minimal useful information.
+	// e.g. trace ID, size, count, service (+some spans?)
 }
 
 func (c *collector) ServeHTTP(w http.ResponseWriter, req *http.Request) {

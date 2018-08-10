@@ -131,7 +131,8 @@ func (c *Cache) evictReasonSpace() {
 		Reason:  ReasonSpace,
 		Trace:   model.Trace(t.spans),
 		LastMod: t.lastmod,
-		// we don't have a root here, it can be calculated later.
+		Msgsize: t.size,
+		// Root: nil (unknown)
 	}
 	c.remove(ele)
 }
@@ -145,6 +146,7 @@ func (c *Cache) evictReasonRoot(root *model.Span) {
 			Reason:  ReasonRoot,
 			Trace:   model.Trace(t.spans),
 			LastMod: t.lastmod,
+			Msgsize: t.size,
 			Root:    root,
 		}
 		c.remove(ele)

@@ -30,4 +30,7 @@ type EvictedTrace struct {
 	Trace model.Trace
 	// LastMod specifies the last time this trace was added to.
 	LastMod time.Time
+	// Msgsize specifies the total msgpack computed (upper bound estimate)
+	// message size of the trace.
+	Msgsize int
 }
