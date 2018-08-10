@@ -3,11 +3,11 @@ package collect
 import (
 	"time"
 
-	"github.com/DataDog/datadog-go/statsd"
+	"github.com/DataDog/datadog-trace-agent/statsd"
 )
 
 // monitor runs a loop, sending occasional statsd entries.
-func (c *Cache) monitor(client *statsd.Client) {
+func (c *Cache) monitor(client statsd.StatsClient) {
 	// send age distribution stats every 5 minutes
 	ageTick := time.NewTicker(5 * time.Minute)
 	defer ageTick.Stop()
@@ -21,14 +21,17 @@ func (c *Cache) monitor(client *statsd.Client) {
 		case <-ageTick.C:
 			c.sendAgeStats(client)
 		case <-sizeTick.C:
-			c.sendSizeStats(client)
+			c.mu.RLock()
+			client.Gauge("datadog.trace_agent.cache.len", float64(c.newIterator().len()), statsdTags, 1)
+			client.Gauge("datadog.trace_agent.cache.bytes", float64(c.size), statsdTags, 1)
+			c.mu.RUnlock()
 		}
 	}
 }
 
 var statsdTags = []string{"version:v1"}
 
-func (c *Cache) sendAgeStats(client *statsd.Client) {
+func (c *Cache) sendAgeStats(client statsd.StatsClient) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -39,12 +42,7 @@ func (c *Cache) sendAgeStats(client *statsd.Client) {
 		if !ok {
 			return
 		}
-		age := now.Sub(t.lastmod)
-		client.Histogram("trace_age", float64(age), statsdTags, 1)
+		age := now.Sub(t.lastmod) / time.Second
+		client.Histogram("datadog.trace_agent.cache.age_seconds", float64(age), statsdTags, 1)
 	}
-}
-
-func (c *Cache) sendSizeStats(client *statsd.Client) {
-	client.Gauge("len", float64(c.newIterator().len()), statsdTags, 1)
-	client.Gauge("bytes", float64(c.size), statsdTags, 1)
 }

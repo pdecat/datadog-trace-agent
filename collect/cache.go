@@ -5,10 +5,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DataDog/datadog-go/statsd"
 	"github.com/DataDog/datadog-trace-agent/model"
+	"github.com/DataDog/datadog-trace-agent/statsd"
 )
 
+// tagRootSpan is the metric key which signals distributed root spans.
 const tagRootSpan = "_root_span"
 
 // defaultCacheSize holds the maximum size allowed for the cache.
@@ -20,24 +21,27 @@ const tagRootSpan = "_root_span"
 // [1] model/span_gen.go#333
 const defaultCacheSize = 200 * 1024 * 1024 // 200MB
 
+type Settings struct {
+	Out     chan<- EvictedTrace
+	MaxSize int
+	Statsd  statsd.StatsClient
+}
+
 // NewCache returns a new Cache which will call the given function when a trace
 // is evicted due to completion or due to maxSize being reached. If addr is not
 // empty, it will be used to report stats to a statsd client.
-func NewCache(onEvict func(*EvictedTrace), maxSize int, addr string) *Cache {
-	if maxSize <= 0 {
-		maxSize = defaultCacheSize
+func NewCache(opts Settings) *Cache {
+	if opts.MaxSize <= 0 {
+		opts.MaxSize = defaultCacheSize
 	}
 	c := &Cache{
-		onEvict: onEvict,
-		maxSize: int(maxSize),
+		out:     opts.Out,
+		maxSize: opts.MaxSize,
 		ll:      list.New(),
 		cache:   make(map[uint64]*list.Element),
 	}
-	if addr != "" {
-		client, err := statsd.New(addr)
-		if err == nil {
-			go c.monitor(client)
-		}
+	if opts.Statsd != nil {
+		go c.monitor(opts.Statsd)
 	}
 	return c
 }
@@ -45,7 +49,7 @@ func NewCache(onEvict func(*EvictedTrace), maxSize int, addr string) *Cache {
 // Cache caches spans until they are considered complete based on certain rules,
 // or until they are evicted due to memory consumption limits (maxSize).
 type Cache struct {
-	onEvict func(*EvictedTrace)
+	out     chan<- EvictedTrace
 	maxSize int
 
 	mu    sync.RWMutex
@@ -119,11 +123,13 @@ func (c *Cache) evictReasonSpace() {
 	if ele == nil {
 		return
 	}
-	c.onEvict(&EvictedTrace{
-		Reason: ReasonSpace,
-		Trace:  model.Trace(ele.Value.(*trace).spans),
+	t := ele.Value.(*trace)
+	c.out <- EvictedTrace{
+		Reason:  ReasonSpace,
+		Trace:   model.Trace(t.spans),
+		LastMod: t.lastmod,
 		// we don't have a root here, it can be calculated later.
-	})
+	}
 	c.remove(ele)
 }
 
@@ -131,11 +137,13 @@ func (c *Cache) evictReasonSpace() {
 func (c *Cache) evictReasonRoot(root *model.Span) {
 	key := root.TraceID
 	if ele, found := c.cache[key]; found {
-		c.onEvict(&EvictedTrace{
-			Reason: ReasonRoot,
-			Trace:  model.Trace(ele.Value.(*trace).spans),
-			Root:   root,
-		})
+		t := ele.Value.(*trace)
+		c.out <- EvictedTrace{
+			Reason:  ReasonRoot,
+			Trace:   model.Trace(t.spans),
+			LastMod: t.lastmod,
+			Root:    root,
+		}
 		c.remove(ele)
 	}
 }

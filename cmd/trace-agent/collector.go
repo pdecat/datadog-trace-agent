@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -10,11 +9,13 @@ import (
 	"github.com/DataDog/datadog-trace-agent/collect"
 	"github.com/DataDog/datadog-trace-agent/info"
 	"github.com/DataDog/datadog-trace-agent/model"
+	"github.com/DataDog/datadog-trace-agent/statsd"
 
 	"github.com/tinylib/msgp/msgp"
 )
 
 type collector struct {
+	out      chan collect.EvictedTrace
 	receiver *HTTPReceiver
 	cache    *collect.Cache
 }
@@ -25,27 +26,31 @@ const maxCacheSize = 200 * 1024 * 1024 // 200MB
 func newCollector(r *HTTPReceiver) http.Handler {
 	c := &collector{
 		receiver: r,
+		out:      make(chan collect.EvictedTrace, 1000),
 	}
-	var addr string
-	if host := r.conf.StatsdHost; host != "" {
-		addr = host
-	}
-	if port := r.conf.StatsdPort; port != 0 {
-		addr += fmt.Sprintf(":%d", port)
-	}
-	c.cache = collect.NewCache(c.onEvict, maxCacheSize, addr)
+	c.cache = collect.NewCache(collect.Settings{
+		Out:     c.out,
+		MaxSize: maxCacheSize,
+		Statsd:  statsd.Client,
+	})
+	go c.waitForTraces()
 	return c
 }
 
-func (c *collector) onEvict(et *collect.EvictedTrace) {
+func (c *collector) waitForTraces() {
+	for et := range c.out {
+		c.handleEvicted(&et)
+	}
+}
+
+func (c *collector) handleEvicted(et *collect.EvictedTrace) {
 	switch et.Reason {
 	case collect.ReasonSpace:
-		// stat, count evicted with no root
+		statsd.Client.Count("datadog.trace_agent.cache.evicted.space", 1, nil, 1)
 	case collect.ReasonRoot:
-		// stat, count completed
+		statsd.Client.Count("datadog.trace_agent.cache.evicted.root", 1, nil, 1)
 	}
-	// TODO
-	// c.r.traces <- et
+	c.receiver.traces <- et.Trace
 }
 
 func (c *collector) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -81,5 +86,6 @@ func (c *collector) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if bytesRead > 0 {
 		atomic.AddInt64(&ts.TracesBytes, int64(bytesRead))
 	}
-	// add to cache
+
+	c.cache.Add(spans)
 }
