@@ -23,12 +23,64 @@ var (
 	trace2 = model.Trace{s21, s22, s23}
 )
 
-func TestCacheEvict(t *testing.T) {
+func TestCacheEvictReasonSpace(t *testing.T) {
+	var evicted *EvictedTrace
+	maxSize := s12.Msgsize() + s13.Msgsize() + s22.Msgsize()
+	c := NewCache(func(et *EvictedTrace) { evicted = et }, maxSize)
+	shouldHave := func(traces ...*trace) { cacheContains(t, c, traces...) }
+	shouldEvict := func(want *EvictedTrace) { sameEvictedTrace(t, evicted, want) }
+
+	t1 := time.Now()
+	c.addWithTime([]*model.Span{s12, s13}, t1)
+	shouldHave(&trace{
+		key:     s11.TraceID,
+		size:    s12.Msgsize() + s13.Msgsize(),
+		lastmod: t1,
+		spans:   model.Trace{s12, s13},
+	})
+	if evicted != nil {
+		t.Fatal("unexpected evict")
+	}
+
+	// touch limit
+	t2 := t1.Add(time.Second)
+	c.addWithTime([]*model.Span{s22}, t2)
+	shouldHave(&trace{
+		key:     s11.TraceID,
+		size:    s12.Msgsize() + s13.Msgsize(),
+		lastmod: t1,
+		spans:   model.Trace{s12, s13},
+	}, &trace{
+		key:     s21.TraceID,
+		size:    s22.Msgsize(),
+		lastmod: t2,
+		spans:   model.Trace{s22},
+	})
+	if evicted != nil {
+		t.Fatal("unexpected evict")
+	}
+
+	// go overboard on trace 2, trace 1 is oldest - gets evicted
+	t3 := t1.Add(time.Second)
+	c.addWithTime([]*model.Span{s23}, t3)
+	shouldHave(&trace{
+		key:     s21.TraceID,
+		size:    s22.Msgsize() + s23.Msgsize(),
+		lastmod: t3,
+		spans:   model.Trace{s22, s23},
+	})
+	shouldEvict(&EvictedTrace{
+		Reason: ReasonSpace,
+		Root:   nil,
+		Trace:  model.Trace{s12, s13},
+	})
+}
+
+func TestCacheEvictReasonRoot(t *testing.T) {
 	var evicted *EvictedTrace
 	c := NewCache(func(et *EvictedTrace) { evicted = et }, 1000)
-	shouldHave := func(traces ...*trace) {
-		cacheContains(t, c, traces...)
-	}
+	shouldHave := func(traces ...*trace) { cacheContains(t, c, traces...) }
+	shouldEvict := func(want *EvictedTrace) { sameEvictedTrace(t, evicted, want) }
 
 	// add some children
 	t1 := time.Now()
@@ -48,7 +100,7 @@ func TestCacheEvict(t *testing.T) {
 		t.Fatal("unexpected eviction")
 	}
 
-	// add root of trace 1
+	// include root of trace 1
 	t2 := t1.Add(time.Second)
 	c.addWithTime([]*model.Span{s11, s12}, t2)
 	shouldHave(&trace{
@@ -57,13 +109,11 @@ func TestCacheEvict(t *testing.T) {
 		lastmod: t1,
 		spans:   model.Trace{s22, s23},
 	})
-	if !sameEvictedTrace(evicted, &EvictedTrace{
+	shouldEvict(&EvictedTrace{
 		Reason: ReasonRoot,
 		Root:   s11,
 		Trace:  trace1,
-	}) {
-		t.Fatal("not evicted")
-	}
+	})
 }
 
 func TestCacheAddSpan(t *testing.T) {
@@ -220,18 +270,18 @@ func BenchmarkCacheAddSpan(b *testing.B) {
 	}
 }
 
-func sameEvictedTrace(got, want *EvictedTrace) bool {
+func sameEvictedTrace(t *testing.T, got, want *EvictedTrace) {
 	if got == nil {
-		return false
+		t.Fatal("got nil")
 	}
 	if got.Reason != want.Reason {
-		return false
+		t.Fatalf("wanted reason %d got %d", want.Reason, got.Reason)
 	}
 	if !reflect.DeepEqual(got.Root, want.Root) {
-		return false
+		t.Fatal("not same root")
 	}
 	if len(got.Trace) != len(want.Trace) {
-		return false
+		t.Fatal("length mismatch")
 	}
 	for _, s1 := range got.Trace {
 		var found bool
@@ -242,10 +292,9 @@ func sameEvictedTrace(got, want *EvictedTrace) bool {
 			}
 		}
 		if !found {
-			return false
+			t.Fatalf("span %s not found in %d", s1.Name, s1.TraceID)
 		}
 	}
-	return true
 }
 
 func testSpan(traceID, spanID, parentID uint64) *model.Span {
@@ -260,8 +309,5 @@ func testSpan(traceID, spanID, parentID uint64) *model.Span {
 		Name:     fmt.Sprintf("%d.%d.%d", traceID, spanID, parentID),
 		Resource: "resource",
 	}
-	//if remoteParent {
-	//span.Metrics = map[string]float64{"_root_span": 1}
-	//}
 	return span
 }
