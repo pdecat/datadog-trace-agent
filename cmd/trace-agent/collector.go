@@ -15,9 +15,9 @@ import (
 )
 
 type collector struct {
-	out      chan collect.EvictedTrace
 	receiver *HTTPReceiver
 	cache    *collect.Cache
+	out      chan collect.EvictedTrace
 }
 
 const maxRequestBodyLengthV1 = 10 * 1024 * 1024
@@ -39,11 +39,11 @@ func newCollector(r *HTTPReceiver) http.Handler {
 
 func (c *collector) waitForTraces() {
 	for et := range c.out {
-		c.handleEvicted(&et)
+		c.handleEvictedTrace(&et)
 	}
 }
 
-func (c *collector) handleEvicted(et *collect.EvictedTrace) {
+func (c *collector) handleEvictedTrace(et *collect.EvictedTrace) {
 	switch et.Reason {
 	case collect.ReasonSpace:
 		statsd.Client.Count("datadog.trace_agent.cache.evicted.space", 1, nil, 1)

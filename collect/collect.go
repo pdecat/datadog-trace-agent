@@ -28,7 +28,6 @@ type EvictedTrace struct {
 	// Trace holds the trace that was evicted. It is only available
 	// for the duration of the OnEvict call.
 	Trace model.Trace
-	// LastMod specifies the time when the last span was added to this
-	// trace.
+	// LastMod specifies the last time this trace was added to.
 	LastMod time.Time
 }
