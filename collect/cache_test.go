@@ -9,29 +9,76 @@ import (
 	"github.com/DataDog/datadog-trace-agent/model"
 )
 
+var (
+	s11    = testSpan(1, 1, 0) // root
+	s12    = testSpan(1, 2, 1) // child of s11
+	s13    = testSpan(1, 3, 1) // child of s11
+	trace1 = model.Trace{s11, s12, s13}
+)
+
+var (
+	s21    = testSpan(2, 1, 0) // root
+	s22    = testSpan(2, 2, 1) // child of s21
+	s23    = testSpan(2, 3, 2) // child of s22
+	trace2 = model.Trace{s21, s22, s23}
+)
+
+func TestCacheEvict(t *testing.T) {
+	var evicted *EvictedTrace
+	c := NewCache(func(et *EvictedTrace) { evicted = et }, 1000)
+	shouldHave := func(traces ...*trace) {
+		cacheContains(t, c, traces...)
+	}
+
+	// add some children
+	t1 := time.Now()
+	c.addWithTime([]*model.Span{s13, s22, s23}, t1)
+	shouldHave(&trace{
+		key:     s11.TraceID,
+		size:    s13.Msgsize(),
+		lastmod: t1,
+		spans:   model.Trace{s13},
+	}, &trace{
+		key:     s21.TraceID,
+		size:    s22.Msgsize() + s23.Msgsize(),
+		lastmod: t1,
+		spans:   model.Trace{s22, s23},
+	})
+	if evicted != nil {
+		t.Fatal("unexpected eviction")
+	}
+
+	// add root of trace 1
+	t2 := t1.Add(time.Second)
+	c.addWithTime([]*model.Span{s11, s12}, t2)
+	shouldHave(&trace{
+		key:     s21.TraceID,
+		size:    s22.Msgsize() + s23.Msgsize(),
+		lastmod: t1,
+		spans:   model.Trace{s22, s23},
+	})
+	if !sameEvictedTrace(evicted, &EvictedTrace{
+		Reason: ReasonRoot,
+		Root:   s11,
+		Trace:  trace1,
+	}) {
+		t.Fatal("not evicted")
+	}
+}
+
 func TestCacheAddSpan(t *testing.T) {
 	now := time.Now()
 	sec := func(s time.Duration) time.Time {
 		return now.Add(s)
 	}
 	c := NewCache(func(et *EvictedTrace) {}, 1000)
-	hasExactly := func(traces ...*trace) {
+	shouldHave := func(traces ...*trace) {
 		cacheContains(t, c, traces...)
 	}
 
-	// traceID: 1
-	s11 := testSpan(1, 1, 0)
-	s12 := testSpan(1, 2, 1)
-	s13 := testSpan(1, 3, 1)
-
-	// traceID: 2
-	s21 := testSpan(2, 1, 0)
-	s22 := testSpan(2, 2, 1)
-	s23 := testSpan(2, 3, 2)
-
 	// trace 1, span 1
 	c.addSpan(s11, sec(1))
-	hasExactly(&trace{
+	shouldHave(&trace{
 		key:     s11.TraceID,
 		size:    s11.Msgsize(),
 		lastmod: sec(1),
@@ -40,7 +87,7 @@ func TestCacheAddSpan(t *testing.T) {
 
 	// trace 1, span 2
 	c.addSpan(s12, sec(2))
-	hasExactly(&trace{
+	shouldHave(&trace{
 		key:     s11.TraceID,
 		size:    s11.Msgsize() + s12.Msgsize(),
 		lastmod: sec(2),
@@ -49,7 +96,7 @@ func TestCacheAddSpan(t *testing.T) {
 
 	// trace 2, span 1
 	c.addSpan(s21, sec(3))
-	hasExactly(&trace{
+	shouldHave(&trace{
 		key:     s11.TraceID,
 		size:    s11.Msgsize() + s12.Msgsize(),
 		lastmod: sec(2),
@@ -63,7 +110,7 @@ func TestCacheAddSpan(t *testing.T) {
 
 	// trace 1, span 3 (list order should change)
 	c.addSpan(s13, sec(1))
-	hasExactly(&trace{
+	shouldHave(&trace{
 		key:     s21.TraceID,
 		size:    s21.Msgsize(),
 		lastmod: sec(3),
@@ -77,7 +124,7 @@ func TestCacheAddSpan(t *testing.T) {
 
 	// trace 2, span 2 (list order should change again)
 	c.addSpan(s22, sec(2))
-	hasExactly(&trace{
+	shouldHave(&trace{
 		key:     s11.TraceID,
 		size:    s11.Msgsize() + s12.Msgsize() + s13.Msgsize(),
 		lastmod: sec(1),
@@ -91,7 +138,7 @@ func TestCacheAddSpan(t *testing.T) {
 
 	// trace 2, span 3
 	c.addSpan(s23, sec(3))
-	hasExactly(&trace{
+	shouldHave(&trace{
 		key:     s11.TraceID,
 		size:    s11.Msgsize() + s12.Msgsize() + s13.Msgsize(),
 		lastmod: sec(1),
@@ -111,6 +158,9 @@ func cacheContains(t *testing.T, c *Cache, traces ...*trace) {
 		t.Fatalf("wanted %d traces, got %d", len(traces), c.Len())
 	}
 	iter := c.newReverseIterator()
+	if len(traces) != iter.len() {
+		t.Fatalf("want %d list elements, got %d", len(traces), iter.len())
+	}
 	var totalSize int
 	for _, tr := range traces {
 		itr, ok := iter.getAndAdvance()
@@ -168,6 +218,34 @@ func BenchmarkCacheAddSpan(b *testing.B) {
 			}
 		})
 	}
+}
+
+func sameEvictedTrace(got, want *EvictedTrace) bool {
+	if got == nil {
+		return false
+	}
+	if got.Reason != want.Reason {
+		return false
+	}
+	if !reflect.DeepEqual(got.Root, want.Root) {
+		return false
+	}
+	if len(got.Trace) != len(want.Trace) {
+		return false
+	}
+	for _, s1 := range got.Trace {
+		var found bool
+		for _, s2 := range want.Trace {
+			if s1 == s2 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func testSpan(traceID, spanID, parentID uint64) *model.Span {

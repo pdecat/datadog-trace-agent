@@ -55,10 +55,13 @@ type trace struct {
 // Add adds a new list of spans to the cache and evicts them when they are completed
 // or when they start filling up too much space.
 func (c *Cache) Add(spans []*model.Span) {
+	c.addWithTime(spans, time.Now())
+}
+
+func (c *Cache) addWithTime(spans []*model.Span, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	now := time.Now()
 	var roots []*model.Span
 	for _, span := range spans {
 		c.addSpan(span, now)
@@ -161,16 +164,23 @@ type iterator struct {
 
 // newIterator returns a new iterator for the Cache.
 func (c *Cache) newIterator() *iterator {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return &iterator{c: c, e: c.ll.Front(), forward: true}
 }
 
 // newReverseIterator returns a new reverse iterator for the Cache.
 func (c *Cache) newReverseIterator() *iterator {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return &iterator{c: c, e: c.ll.Back(), forward: false}
+}
+
+// len returns the total number of items in the list.
+func (i *iterator) len() int {
+	i.c.mu.RLock()
+	defer i.c.mu.RUnlock()
+	return i.c.ll.Len()
 }
 
 // getAndAdvance returns key, value, true if the current entry is valid and advances the
