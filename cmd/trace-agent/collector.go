@@ -1,26 +1,52 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"sync/atomic"
 
+	"github.com/DataDog/datadog-trace-agent/collect"
 	"github.com/DataDog/datadog-trace-agent/info"
 	"github.com/DataDog/datadog-trace-agent/model"
+
 	"github.com/tinylib/msgp/msgp"
 )
 
 type collector struct {
 	receiver *HTTPReceiver
-}
-
-func newCollector(r *HTTPReceiver) http.Handler {
-	c := &collector{receiver: r}
-	return c
+	cache    *collect.Cache
 }
 
 const maxRequestBodyLengthV1 = 10 * 1024 * 1024
+const maxCacheSize = 200 * 1024 * 1024 // 200MB
+
+func newCollector(r *HTTPReceiver) http.Handler {
+	c := &collector{
+		receiver: r,
+	}
+	var addr string
+	if host := r.conf.StatsdHost; host != "" {
+		addr = host
+	}
+	if port := r.conf.StatsdPort; port != 0 {
+		addr += fmt.Sprintf(":%d", port)
+	}
+	c.cache = collect.NewCache(c.onEvict, maxCacheSize, addr)
+	return c
+}
+
+func (c *collector) onEvict(et *collect.EvictedTrace) {
+	switch et.Reason {
+	case collect.ReasonSpace:
+		// stat, count evicted with no root
+	case collect.ReasonRoot:
+		// stat, count completed
+	}
+	// TODO
+	// c.r.traces <- et
+}
 
 func (c *collector) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != "POST" {
@@ -30,6 +56,7 @@ func (c *collector) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	req.Body = model.NewLimitedReader(req.Body, maxRequestBodyLengthV1)
 	defer req.Body.Close()
 
+	// TODO: get count from msgpack array header (not HTTP header) for presample.
 	if !c.receiver.preSampler.Sample(req) {
 		io.Copy(ioutil.Discard, req.Body)
 		HTTPOK(w)

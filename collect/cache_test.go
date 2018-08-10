@@ -45,7 +45,7 @@ func TestIsRoot(t *testing.T) {
 func TestCacheEvictReasonSpace(t *testing.T) {
 	var evicted *EvictedTrace
 	maxSize := s12.Msgsize() + s13.Msgsize() + s22.Msgsize()
-	c := NewCache(func(et *EvictedTrace) { evicted = et }, maxSize)
+	c := NewCache(func(et *EvictedTrace) { evicted = et }, maxSize, "")
 	shouldHave := func(traces ...*trace) { cacheContains(t, c, traces...) }
 	shouldEvict := func(want *EvictedTrace) { sameEvictedTrace(t, evicted, want) }
 
@@ -79,7 +79,7 @@ func TestCacheEvictReasonSpace(t *testing.T) {
 		t.Fatal("unexpected evict")
 	}
 
-	// go overboard on trace 2, trace 1 is oldest - gets evicted
+	// go overboard on trace 2
 	t3 := t1.Add(time.Second)
 	c.addWithTime([]*model.Span{s23}, t3)
 	shouldHave(&trace{
@@ -88,6 +88,7 @@ func TestCacheEvictReasonSpace(t *testing.T) {
 		lastmod: t3,
 		spans:   model.Trace{s22, s23},
 	})
+	// trace 1 is oldest - gets evicted
 	shouldEvict(&EvictedTrace{
 		Reason: ReasonSpace,
 		Root:   nil,
@@ -97,7 +98,7 @@ func TestCacheEvictReasonSpace(t *testing.T) {
 
 func TestCacheEvictReasonRoot(t *testing.T) {
 	var evicted *EvictedTrace
-	c := NewCache(func(et *EvictedTrace) { evicted = et }, 1000)
+	c := NewCache(func(et *EvictedTrace) { evicted = et }, 1000, "")
 	shouldHave := func(traces ...*trace) { cacheContains(t, c, traces...) }
 	shouldEvict := func(want *EvictedTrace) { sameEvictedTrace(t, evicted, want) }
 
@@ -140,7 +141,7 @@ func TestCacheAddSpan(t *testing.T) {
 	sec := func(s time.Duration) time.Time {
 		return now.Add(s)
 	}
-	c := NewCache(func(et *EvictedTrace) {}, 1000)
+	c := NewCache(func(et *EvictedTrace) {}, 1000, "")
 	shouldHave := func(traces ...*trace) {
 		cacheContains(t, c, traces...)
 	}
@@ -274,7 +275,7 @@ func BenchmarkCacheAddSpan(b *testing.B) {
 	} {
 		b.Run(fmt.Sprintf("%d-traces", max), func(b *testing.B) {
 			// we can use maxSize 1; addSpan doesn't care
-			c := NewCache(func(_ *EvictedTrace) {}, 1)
+			c := NewCache(func(_ *EvictedTrace) {}, 1, "")
 			b.SetBytes(int64(testSpan(0, 0, 0).Msgsize()))
 			var traceID, spanID uint64
 			for i := 0; i < b.N; i++ {

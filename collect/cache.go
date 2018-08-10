@@ -5,32 +5,41 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/DataDog/datadog-trace-agent/model"
 )
 
 const tagRootSpan = "_root_span"
 
-// defaultMaxSize holds the maximum size allowed for the cache.
+// defaultCacheSize holds the maximum size allowed for the cache.
 //
 // model.Span size is computed based on it's msgpack generated Msgsize [1] method. This
 // is not an accurate representation of the space this span uses in memory, but it is a
 // reliable approximation. We should consider the maximum space used by this package to
 // be at worst double the value of this constant.
 // [1] model/span_gen.go#333
-const defaultMaxSize = 200 * 1024 * 1024 // 200MB
+const defaultCacheSize = 200 * 1024 * 1024 // 200MB
 
 // NewCache returns a new Cache which will call the given function when a trace
-// is evicted due to completion or due to maxSize being reached.
-func NewCache(onEvict func(*EvictedTrace), maxSize int) *Cache {
+// is evicted due to completion or due to maxSize being reached. If addr is not
+// empty, it will be used to report stats to a statsd client.
+func NewCache(onEvict func(*EvictedTrace), maxSize int, addr string) *Cache {
 	if maxSize <= 0 {
-		maxSize = defaultMaxSize
+		maxSize = defaultCacheSize
 	}
-	return &Cache{
+	c := &Cache{
 		onEvict: onEvict,
 		maxSize: int(maxSize),
 		ll:      list.New(),
 		cache:   make(map[uint64]*list.Element),
 	}
+	if addr != "" {
+		client, err := statsd.New(addr)
+		if err == nil {
+			go c.monitor(client)
+		}
+	}
+	return c
 }
 
 // Cache caches spans until they are considered complete based on certain rules,
@@ -58,6 +67,8 @@ func (c *Cache) Add(spans []*model.Span) {
 	c.addWithTime(spans, time.Now())
 }
 
+// addWithTime adds the spans to the cache with the timestamp from now
+// added to each trace.
 func (c *Cache) addWithTime(spans []*model.Span, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
