@@ -154,8 +154,8 @@ func BenchmarkCacheAddSpan(b *testing.B) {
 		10000, // many traces, testing load on the list push
 	} {
 		b.Run(fmt.Sprintf("%d-traces", max), func(b *testing.B) {
-			// we can use maxSize 0; addSpan doesn't care
-			c := NewCache(func(_ *EvictedTrace) {}, 0)
+			// we can use maxSize 1; addSpan doesn't care
+			c := NewCache(func(_ *EvictedTrace) {}, 1)
 			b.SetBytes(int64(testSpan(0, 0, 0).Msgsize()))
 			var traceID, spanID uint64
 			for i := 0; i < b.N; i++ {
