@@ -1,3 +1,5 @@
+// Package collect provides tools to buffer spans in a size bounded cache
+// until they are grown into complete traces or evicted for other reasons.
 package collect
 
 import (
@@ -9,22 +11,55 @@ import (
 	"github.com/DataDog/datadog-trace-agent/statsd"
 )
 
+// EvictionReason specifies the reason why a trace was evicted.
+type EvictionReason int
+
+const (
+	// ReasonRoot specifies that a trace was evicted because the root was received.
+	ReasonRoot EvictionReason = iota
+	// ReasonSpace specifies that this trace had to be evicted to free up memory space.
+	ReasonSpace
+)
+
+// EvictedTrace contains information about a trace which was evicted.
+type EvictedTrace struct {
+	// Reason specifies the reason why this trace was evicted.
+	Reason EvictionReason
+	// Root specifies the root which was selected for this trace when the
+	// reason is ReasonRoot.
+	Root *model.Span
+	// Trace holds the trace that was evicted. It is only available
+	// for the duration of the OnEvict call.
+	Trace model.Trace
+	// LastMod specifies the last time this trace was added to.
+	LastMod time.Time
+	// Msgsize specifies the total msgpack computed (upper bound estimate)
+	// message size of the trace.
+	Msgsize int
+}
+
 // tagRootSpan is the metric key which signals distributed root spans.
 const tagRootSpan = "_root_span"
 
 // defaultCacheSize holds the maximum size allowed for the cache.
-//
-// model.Span size is computed based on it's msgpack generated Msgsize [1] method. This
-// is not an accurate representation of the space this span uses in memory, but it is a
-// reliable approximation. We should consider the maximum space used by this package to
-// be at worst double the value of this constant.
-// [1] model/span_gen.go#333
 const defaultCacheSize = 200 * 1024 * 1024 // 200MB
 
+// Settings specifies the settings to initialize the Cache with.
 type Settings struct {
-	Out     chan<- EvictedTrace
+	// Out channel specifies the channel where evicted traces will be sent
+	// to before eviction.
+	Out chan<- EvictedTrace
+
+	// MaxSize specifies the maximum space allowed for the cache. This space is calculated
+	// based on the sum of span's Msgsize (msgpack generated) method [1]. It is an upper bound
+	// estimate of the space the span will use when encoded. When thinking in terms of memory
+	// size, the memory used by the cache should be evaluated to at most double this value.
+	// [1] model/span_gen.go#333
 	MaxSize int
-	Statsd  statsd.StatsClient
+
+	// Statsd specifies the dogstatsd client that will be used for debugging. Adding a client
+	// might slightly affect performance.
+	Statsd statsd.StatsClient
 }
 
 // NewCache returns a new Cache which will call the given function when a trace

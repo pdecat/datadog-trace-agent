@@ -46,26 +46,31 @@ func (c *collector) waitForTraces() {
 }
 
 func (c *collector) handleEvictedTrace(et *collect.EvictedTrace) {
+	var service, name string
+	if n := len(et.Trace); n >= 0 {
+		// Log the service and the name of the last span in the trace.
+		// It's the one that finished last.
+		service = et.Trace[n-1].Service
+		name = et.Trace[n-1].Name
+	}
 	switch et.Reason {
 	case collect.ReasonSpace:
-		// these should be stale, and possibly have been in the cache long
-		statsd.Client.Count("datadog.trace_agent.cache.evicted_space", 1, nil, 1)
-		c.logFallout(et)
+		statsd.Client.Count("datadog.trace_agent.cache.evicted", 1, []string{
+			"version:v1",
+			"reason:space",
+			"service:" + service,
+			"name:" + name,
+		}, 1)
 
 	case collect.ReasonRoot:
-		statsd.Client.Count("datadog.trace_agent.cache.evicted_root", 1, nil, 1)
+		statsd.Client.Count("datadog.trace_agent.cache.evicted", 1, []string{
+			"version:v1",
+			"reason:root",
+			"service:" + service,
+			"name:" + name,
+		}, 1)
 	}
 	c.receiver.traces <- et.Trace
-}
-
-func (c *collector) logFallout(et *collect.EvictedTrace) {
-	// TODO: log information somewhere about evicted traces
-	// but keep track of occupied disk space and don't go
-	// overboard. Would be great to rotate and always have
-	// latest.
-	//
-	// Only log sub-sections of traces. Minimal useful information.
-	// e.g. trace ID, size, count, service (+some spans?)
 }
 
 func (c *collector) ServeHTTP(w http.ResponseWriter, req *http.Request) {
