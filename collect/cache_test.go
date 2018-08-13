@@ -99,7 +99,7 @@ func TestCacheEvictReasonSpace(t *testing.T) {
 	select {
 	case ev := <-outCh:
 		sameEvictedTrace(t, &ev, &EvictedTrace{
-			Reason: ReasonSpace,
+			Reason: EvictReasonSpace,
 			Root:   nil,
 			Trace:  model.Trace{s12, s13},
 		})
@@ -150,7 +150,7 @@ func TestCacheEvictReasonRoot(t *testing.T) {
 	select {
 	case ev := <-outCh:
 		sameEvictedTrace(t, &ev, &EvictedTrace{
-			Reason: ReasonRoot,
+			Reason: EvictReasonRoot,
 			Root:   s11,
 			Trace:  trace1,
 		})

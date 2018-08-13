@@ -54,7 +54,7 @@ func (c *collector) handleEvictedTrace(et *collect.EvictedTrace) {
 		name = et.Trace[n-1].Name
 	}
 	switch et.Reason {
-	case collect.ReasonSpace:
+	case collect.EvictReasonSpace:
 		statsd.Client.Count("datadog.trace_agent.cache.evicted", 1, []string{
 			"version:v1",
 			"reason:space",
@@ -62,7 +62,7 @@ func (c *collector) handleEvictedTrace(et *collect.EvictedTrace) {
 			"name:" + name,
 		}, 1)
 
-	case collect.ReasonRoot:
+	case collect.EvictReasonRoot:
 		statsd.Client.Count("datadog.trace_agent.cache.evicted", 1, []string{
 			"version:v1",
 			"reason:root",

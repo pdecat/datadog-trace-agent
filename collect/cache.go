@@ -15,10 +15,10 @@ import (
 type EvictionReason int
 
 const (
-	// ReasonRoot specifies that a trace was evicted because the root was received.
-	ReasonRoot EvictionReason = iota
-	// ReasonSpace specifies that this trace had to be evicted to free up memory space.
-	ReasonSpace
+	// EvictReasonRoot specifies that a trace was evicted because the root was received.
+	EvictReasonRoot EvictionReason = iota
+	// EvictReasonSpace specifies that this trace had to be evicted to free up memory space.
+	EvictReasonSpace
 )
 
 // EvictedTrace contains information about a trace which was evicted.
@@ -26,7 +26,7 @@ type EvictedTrace struct {
 	// Reason specifies the reason why this trace was evicted.
 	Reason EvictionReason
 	// Root specifies the root which was selected for this trace when the
-	// reason is ReasonRoot.
+	// reason is EvictReasonRoot.
 	Root *model.Span
 	// Trace holds the trace that was evicted. It is only available
 	// for the duration of the OnEvict call.
@@ -123,10 +123,10 @@ func (c *Cache) addWithTime(spans []*model.Span, now time.Time) {
 		}
 	}
 	for _, span := range roots {
-		c.evictReasonRoot(span)
+		c.evictEvictReasonRoot(span)
 	}
 	for c.size > c.maxSize {
-		c.evictReasonSpace()
+		c.evictEvictReasonSpace()
 	}
 }
 
@@ -155,15 +155,15 @@ func (c *Cache) addSpan(span *model.Span, now time.Time) {
 	c.size += size
 }
 
-// evictReasonSpace evicts the least recently added to trace from the cache.
-func (c *Cache) evictReasonSpace() {
+// evictEvictReasonSpace evicts the least recently added to trace from the cache.
+func (c *Cache) evictEvictReasonSpace() {
 	ele := c.ll.Back()
 	if ele == nil {
 		return
 	}
 	t := ele.Value.(*trace)
 	c.out <- EvictedTrace{
-		Reason:  ReasonSpace,
+		Reason:  EvictReasonSpace,
 		Trace:   model.Trace(t.spans),
 		LastMod: t.lastmod,
 		Msgsize: t.size,
@@ -172,13 +172,13 @@ func (c *Cache) evictReasonSpace() {
 	c.remove(ele)
 }
 
-// evictReasonRoot evicts the trace at key with the given root.
-func (c *Cache) evictReasonRoot(root *model.Span) {
+// evictEvictReasonRoot evicts the trace at key with the given root.
+func (c *Cache) evictEvictReasonRoot(root *model.Span) {
 	key := root.TraceID
 	if ele, found := c.cache[key]; found {
 		t := ele.Value.(*trace)
 		c.out <- EvictedTrace{
-			Reason:  ReasonRoot,
+			Reason:  EvictReasonRoot,
 			Trace:   model.Trace(t.spans),
 			LastMod: t.lastmod,
 			Msgsize: t.size,
