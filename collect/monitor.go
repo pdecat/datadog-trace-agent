@@ -30,7 +30,7 @@ func (c *Cache) computeStats(client statsd.StatsClient) {
 	for {
 		t, ok := iter.getAndAdvance()
 		if !ok {
-			return
+			break
 		}
 		idle := now.Sub(t.lastmod)
 		switch {
