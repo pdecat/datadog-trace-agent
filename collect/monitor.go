@@ -8,7 +8,7 @@ import (
 
 // monitor runs a loop, sending occasional statsd entries.
 func (c *Cache) monitor(client statsd.StatsClient) {
-	tick := time.NewTicker(2 * time.Minute)
+	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 
 	for {
