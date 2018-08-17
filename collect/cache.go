@@ -123,10 +123,10 @@ func (c *Cache) addWithTime(spans []*model.Span, now time.Time) {
 		}
 	}
 	for _, span := range roots {
-		c.evictEvictReasonRoot(span)
+		c.evictReasonRoot(span)
 	}
 	for c.size > c.maxSize {
-		c.evictEvictReasonSpace()
+		c.evictReasonSpace()
 	}
 }
 
@@ -155,8 +155,8 @@ func (c *Cache) addSpan(span *model.Span, now time.Time) {
 	c.size += size
 }
 
-// evictEvictReasonSpace evicts the least recently added to trace from the cache.
-func (c *Cache) evictEvictReasonSpace() {
+// evictReasonSpace evicts the least recently added to trace from the cache.
+func (c *Cache) evictReasonSpace() {
 	ele := c.ll.Back()
 	if ele == nil {
 		return
@@ -172,8 +172,8 @@ func (c *Cache) evictEvictReasonSpace() {
 	c.remove(ele)
 }
 
-// evictEvictReasonRoot evicts the trace at key with the given root.
-func (c *Cache) evictEvictReasonRoot(root *model.Span) {
+// evictReasonRoot evicts the trace at key with the given root.
+func (c *Cache) evictReasonRoot(root *model.Span) {
 	key := root.TraceID
 	if ele, found := c.cache[key]; found {
 		t := ele.Value.(*trace)
